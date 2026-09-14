@@ -1,7 +1,11 @@
-# Stage A va Stage B: train cai gi, va bao nhieu step la du
+# Stage A, Stage B va phase v2: train cai gi, va bao nhieu step la du
 
 Tai lieu nay dua tren **code dang chay** va **run that cua ban** (Kaggle 2x T4,
 14 environment, 10.000 step). Moi so do deu do bang lenh, khong uoc luong.
+
+> **Ba giai doan, khong phai hai.** Stage A va Stage B la hai giai doan cua mot
+> run train. Jacobian regularization la **phase v2 rieng**, chay sau do tu mot
+> parent checkpoint — xem muc 8. Run cua ban moi chay A va B.
 
 ---
 
@@ -201,7 +205,82 @@ that**, khong phai encoder ngau nhien. Do la dieu kien dung de vao Stage B.
 
 ---
 
-## 8. Tom tat mot bang
+## 8. Jacobian nam o dau? — **KHONG** phai Stage C
+
+Cau hoi hay gap: "sao khong thay Jacobian trong Stage A hay B?"
+
+**Vi no khong nam trong A hay B.** Jacobian regularization
+([themjacobian.md](themjacobian.md)) la mot **phase RIENG**, chay **sau** khi
+Stage B da xong, tu mot checkpoint parent.
+
+### Toan bo duong di
+
+```
+  Stage A  ──→  Stage B  ──→  [ parent checkpoint ]
+  0–2.000       2.000–10.000          │
+  phuc hoi      + JEPA                │  cung parent, cung budget, cung seed
+                                      ├──→ phase v2 CONTROL    (khong Jacobian)
+                                      └──→ phase v2 TREATMENT  (co Jacobian)
+                                                  │
+                                            moi ben freeze backbone
+                                                  ↓
+                                        train probe decoder de do
+                                        bieu dien con giu bao nhieu thong tin
+```
+
+### Vi sao phai tach ra, khong gop vao Stage B
+
+1. **Can parent on dinh.** Config yeu cau `parent_stage_required: stable_stage_b`.
+   Bat Jacobian tu dau thi khong co moc nao de so sanh.
+2. **Phai co doi chung.** Muon biet Jacobian co loi hay khong thi can hai run
+   **giong het nhau tru dung no**. Gop vao Stage B thi khong tach duoc dong gop.
+3. **No la thi nghiem, khong phai cong thuc chinh.** Mac dinh **TAT**, va
+   schema phai la 2 moi bat duoc — config v1 cu chay khong doi.
+
+### Run cua ban khong co Jacobian
+
+| Config | schema | `encoder_sensitivity` | Stage A/B |
+| --- | ---: | ---: | ---: |
+| **`kaggle_balanced`** (ban da chay) | 1 | **tat** | 2.000 / 8.000 |
+| `kaggle_v2_control` | 2 | tat | 0 / 1.000 |
+| `kaggle_v2_treatment` | 2 | **bat** | 0 / 1.000 |
+
+Hai config v2 co `stage_a = 0`: chung **vao thang Stage B** vi parent da co
+teacher roi, khong can warm-up lai.
+
+### Cach nhan biet Jacobian dang chay
+
+Log se co them cac cot `sens_*`:
+
+```
+[B] step 100/1000 loss ... lam_J 0.100 lam_enc 5.00e-05 ... sens_source=image
+    sens_gain_normalized=171.97  sens_gain_raw=100.07
+```
+
+Log cua ban **khong co** cac cot do — dung nhu ky vong voi `kaggle_balanced`.
+
+### Jacobian lam gi, mot dong
+
+Do do nhay cua **FI/FU** (dac trung dense **truoc** fusion) khi them mot nhieu
+loan nho vao dau vao, roi phat neu no qua nhay:
+
+```
+L_enc = mean_batch[  mean((h' - h)^2) / mean((x' - x)^2)  ]
+        h = LayerNorm khong affine cua FI hoac FU   (CHI de do)
+```
+
+Gradient tu so hang nay **chi** toi encoder cua modality bi perturb — khong toi
+fusion, decoder, predictor hay teacher (da kiem bang autograd).
+
+Chi tiet: [ENCODER_SENSITIVITY_REPORT.md](ENCODER_SENSITIVITY_REPORT.md) va
+[REPRESENTATION_PROBE_REPORT.md](REPRESENTATION_PROBE_REPORT.md).
+
+**Trang thai:** code da xong va qua gate G0–G4, nhung **chua chay** control/treatment
+lan nao, nen **chua co bang chung** Jacobian co loi hay khong.
+
+---
+
+## 9. Tom tat mot bang
 
 | | Stage A | Stage B |
 | --- | --- | --- |
@@ -212,3 +291,14 @@ that**, khong phai encoder ngau nhien. Do la dieu kien dung de vao Stage B.
 | Predictor nhan gradient | khong | co |
 | Encoder / fusion / decoder | **co** (sau vai buoc dau) | co, gradient IMU manh hon nhieu |
 | Muc dich | hoc phuc hoi, tao encoder du tot lam teacher | giu phuc hoi, them tin hieu latent noisy→clean |
+
+Va mot bang nua cho phase v2 (khong phai stage):
+
+| | phase v2 control | phase v2 treatment |
+| --- | --- | --- |
+| Bat dau tu | cung mot parent Stage B | cung parent do |
+| `stage_a / stage_b` | 0 / 1.000 | 0 / 1.000 |
+| `encoder_sensitivity` | **tat** | **bat** |
+| Loss | `L_image + 100·L_imu + λ_J·L_JEPA` | cong them `λ_enc · L_enc` |
+| LR | 2e-5 | 2e-5 |
+| Sau do | freeze backbone, train probe decoder | y het, cung init hash |
