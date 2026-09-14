@@ -42,6 +42,9 @@ Chi tiet: [TRAINING_REPORT.md](TRAINING_REPORT.md) muc 0.
 **Van chua co bang chung** ve loi ich rieng cua JEPA, cua cross-modal fusion, hay
 cua QWT so voi Haar — can cac run ablation cung budget o bang ben duoi.
 
+> Stage A va Stage B train cai gi, va bao nhieu step la du:
+> **[STAGE_A_B.md](STAGE_A_B.md)**
+>
 > Kien truc chi tiet — luong du lieu, cong thuc tung khoi, so tham so tung module:
 > **[KIEN_TRUC.md](KIEN_TRUC.md)**
 
