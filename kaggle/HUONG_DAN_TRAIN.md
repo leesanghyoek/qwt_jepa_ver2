@@ -9,7 +9,7 @@ IMU 100 Hz · camera 10 Hz · acc.npy CO trong luc · anh khop cam_time
 ```
 
 Uoc tinh quy mo: ~65.700 anh, loai ~2.300 o bien trajectory → **~63.000 sample**.
-Voi **effective batch 8** thi ~6.300 step/epoch, nen **10.000 step ≈ 1,6 epoch**.
+Voi **effective batch 8** thi ~6.300 step/epoch, nen **30.000 step ≈ 4,7 epoch**.
 Con so nay khong doi du chay 1 hay 2 GPU — xem muc "Da GPU" ben duoi.
 
 **Settings notebook:** Accelerator `GPU T4 x2` · Internet `ON` · Add data:
@@ -191,7 +191,7 @@ import pathlib
 
 PREV = next(iter(sorted(pathlib.Path('/kaggle/input').glob('*/outputs/main/last.pt'))), None)
 resume = f'--resume {PREV}' if PREV else ''
-STEPS = 10000        # GIAM xuong neu Cell 6 cho thay khong kip 12h
+STEPS = 30000        # GIAM xuong neu Cell 6 cho thay khong kip 12h
 
 print('resume tu:', PREV or '(phien dau, train tu dau)')
 !python -m qjepa train --config {CONFIG} --manifest {MANIFEST} \
@@ -229,8 +229,11 @@ Lich hai stage (tu dong theo config):
 
 | Stage | Step | Noi dung |
 | --- | --- | --- |
-| A | 0 – 2.000 | chi phuc hoi, `lambda_J = 0` |
-| B | 2.000 – 10.000 | khoi tao teacher, JEPA ramp 0,01 → 0,10 |
+| A | 0 – 4.000 | chi phuc hoi, `lambda_J = 0` |
+| B | 4.000 – 30.000 | khoi tao teacher, JEPA ramp 0,01 → 0,10 |
+
+Uoc tinh **~65 phut** tren 2x T4 (do tu run truoc: 0,13 s/step). Ly do chon cac
+con so nay: [TUNING.md](../TUNING.md).
 
 Doc log: `r_image`, `r_acc`, `r_gyro` **< 1** nghia la tot hon input nhieu.
 `all<1 True` la dieu kien de luu `best_joint.pt`.

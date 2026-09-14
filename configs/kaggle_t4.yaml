@@ -89,7 +89,7 @@ loss:
   imu_weight: 1.0
   jepa_start_weight: 0.01
   jepa_max_weight: 0.1
-  jepa_ramp_updates: 1000
+  jepa_ramp_updates: 2000
   jepa_target_norm_eps: 1.0e-05
   edge_weight: 0.0
   imu_delta_weight: 0.0
@@ -108,18 +108,18 @@ train:
   grad_clip_norm: 1.0
   precision: fp16
   num_workers: 4
-  max_optimizer_steps: 10000
-  stage_a_optimizer_steps: 2000
-  stage_b_optimizer_steps: 8000
+  max_optimizer_steps: 30000
+  stage_a_optimizer_steps: 4000
+  stage_b_optimizer_steps: 26000
   scheduler: warmup_cosine
   warmup_fraction: 0.05
-  minimum_lr: 1.0e-06
+  minimum_lr: 1.0e-05
   teacher_momentum_start: 0.99
   teacher_momentum_end: 0.999
   initialize_teacher_at_stage_b: true
   validation_every_updates: 1000
-  checkpoint_every_updates: 500
-  validation_batches: 32
+  checkpoint_every_updates: 1000
+  validation_batches: 128
 evaluation:
   image_data_range: 1.0
   image_border_crop: 0
