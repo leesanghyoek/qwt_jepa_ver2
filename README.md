@@ -124,7 +124,10 @@ run 1 GPU va 2 GPU so sanh truc tiep duoc. Khong chia het thi code canh bao.
 **Da kiem bang test that** (2 process, backend gloo): sau khi train, hai rank co
 tham so **giong het nhau** o ca Stage A, Stage B (teacher EMA) va khi bat encoder
 sensitivity; DistributedSampler chia du lieu khong chong lap; chi rank 0 ghi
-checkpoint. **Chua kiem** tren 2 GPU roi voi NCCL — may phat trien chi co mot GPU.
+checkpoint.
+
+**Da xac nhan tren 2x T4 that** (Kaggle, NCCL): 10.000 step trong 21,6 phut,
+`[dist] 2 GPU | batch/rank 4 | accum 1 | effective batch 8` — dung nhu thiet ke.
 
 ## Chay o may local
 
