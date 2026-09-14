@@ -23,7 +23,7 @@ IMU nhieu  ──> Haar 1D          ──> CNN1D encoder ─┘                
 | G4 | Pilot held-out + JEPA | **NOT_RUN** — can GPU Kaggle |
 | G5 | Save/load/resume/export | **PASS** |
 
-91 test: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q`
+100 test: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q`
 
 > GPU **khong deterministic** (cuDNN autotune): hai run giong het nhau lech
 > ~9,6e-05 o muc tham so. Tren CPU sai khac la 0,0 va resume tai epoch boundary
@@ -133,6 +133,18 @@ python -m qjepa export      --config configs/main_qwt.yaml --manifest outputs/ma
                             --checkpoint outputs/main_qwt/last.pt
 ```
 
+## Xem model co hoc dung khong
+
+```bash
+python -m qjepa plot --run-dir outputs/main_qwt \
+    --config configs/main_qwt.yaml --manifest outputs/manifest \
+    --checkpoint outputs/main_qwt/last.pt
+```
+
+Xuat `training_curves.png` (9 panel) va `samples.png`, kem bang kiem tra tu dong
+in ra terminal. Do thi trung tam la **`r = MSE(output)/MSE(nhieu)`**: chi `r < 1`
+moi nghia la model co ich. Loss giam khong du de ket luan.
+
 ## Config
 
 | File | Vai tro |
@@ -188,6 +200,7 @@ Dac ta muc 13 cho phep chinh weight bang pilot va ghi vao **config moi** — do 
 | `qjepa/models/representation_probe.py` | decoder danh gia, chi doc ZI/ZU (v2) |
 | `qjepa/training/probe_trainer.py` | train probe, backbone dong bang (v2) |
 | `qjepa/evaluation/representation.py` | do nhay va latent collapse (v2) |
+| `qjepa/evaluation/plots.py` | do thi chan doan train va bang kiem tu dong |
 | `qjepa/cli.py` | CLI |
 
 ## Gioi han da biet

@@ -385,6 +385,36 @@ def cmd_diagnose_sensitivity(args) -> None:
     print("->", out)
 
 
+def cmd_plot(args) -> None:
+    """Ve do thi chan doan tu log, va panel anh neu co checkpoint."""
+    from .evaluation.plots import plot_training, print_diagnosis
+
+    run_dir = Path(args.run_dir)
+    print(f"=== CHAN DOAN: {run_dir} ===")
+    print_diagnosis(run_dir)
+    curves = plot_training(run_dir, title=args.title)
+    print(f"\n-> {curves}")
+
+    if args.checkpoint:
+        from .evaluation.plots import plot_samples
+        from .training.trainer import build_model
+
+        cfg, built, normalizer = _load(args)
+        device = _device(args.device)
+        payload = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        model = build_model(cfg, normalizer).to(device)
+        if payload.get("teacher_initialized"):
+            model.initialize_teacher()
+            model.to(device)
+        model.load_state_dict(payload["model"], strict=True)
+        panel = plot_samples(
+            model, cfg, built["samples"][args.split], run_dir / "samples.png",
+            device=device, num=args.num_samples,
+            realization=cfg.corruption.validation_realization,
+        )
+        print(f"-> {panel}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="qjepa", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -467,6 +497,18 @@ def build_parser() -> argparse.ArgumentParser:
     dg.add_argument("--bank-samples", type=int, default=64)
     dg.add_argument("--out", default=None)
     dg.set_defaults(func=cmd_diagnose_sensitivity)
+
+    pl = sub.add_parser("plot", help="ve do thi chan doan train")
+    pl.add_argument("--run-dir", required=True, help="thu muc chua train_log.jsonl")
+    pl.add_argument("--title", default=None)
+    pl.add_argument("--checkpoint", default=None, help="neu co: ve them panel anh/IMU")
+    pl.add_argument("--config", default=None)
+    pl.add_argument("--manifest", default=None)
+    pl.add_argument("--device", default="auto")
+    pl.add_argument("--output-dir", default=None)
+    pl.add_argument("--split", default="valid")
+    pl.add_argument("--num-samples", type=int, default=4)
+    pl.set_defaults(func=cmd_plot)
 
     x = sub.add_parser("export", help="export checkpoint inference")
     common(x)

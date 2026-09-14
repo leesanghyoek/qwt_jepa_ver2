@@ -227,6 +227,69 @@ Doc log: `r_image`, `r_acc`, `r_gyro` **< 1** nghia la tot hon input nhieu.
 
 ---
 
+## Cell 8b — Xem model co dang hoc dung khong
+
+```python
+from IPython.display import Image, display
+
+!python -m qjepa plot --run-dir {WORK}/main \
+    --config {CONFIG} --manifest {MANIFEST} \
+    --checkpoint {WORK}/main/last.pt --num-samples 4
+
+display(Image(f'{WORK}/main/training_curves.png'))
+display(Image(f'{WORK}/main/samples.png'))
+```
+
+Chay duoc **giua chung** khi train con dang chay o cell khac — no chi doc
+`train_log.jsonl` va `validation.jsonl`.
+
+### Doc do thi nao truoc
+
+Do thi quan trong nhat la **`r = MSE(output) / MSE(nhieu)`** (o giua hang tren):
+
+| | Y nghia |
+| --- | --- |
+| `r < 1` | model **co ich** — sai so nho hon khong lam gi |
+| `r = 1` | model tra lai gan dung dau vao |
+| `r > 1` | model dang **lam hong** du lieu |
+
+Loss giam **khong** du de ket luan. Model co the giam loss ma van lam xau du
+lieu so voi dau vao; chi `r` tra loi duoc cau hoi do.
+
+### Bang KIEM TRA (goc duoi phai)
+
+Tu dong danh gia va in ra `OK` / `CANH BAO` / `XAU` / `CHUA DU`:
+
+| Muc | Y nghia khi XAU |
+| --- | --- |
+| Loss phuc hoi giam | khong hoc duoc; kiem LR, gradient, target |
+| Gradient norm | bung no hoac triet tieu |
+| Anh/Accel/Gyro tot hon identity | `r >= 1` — chua co ich |
+| Ca ba nguon cung tot | chua luu duoc `best_joint.pt` |
+| Anh trong [0,1] | nhieu pixel tran ra ngoai truoc khi clamp |
+| Khong overfit | validation xau di trong khi train tot len |
+
+> Muc "Loss phuc hoi giam" **khong tinh** so hang JEPA. Khi vao Stage B,
+> `loss_total` nhay len la **binh thuong** vi cong them `lambda_J * L_JEPA` —
+> khong phai dau hieu hong.
+
+### Panel anh (`samples.png`)
+
+Moi hang mot sample co dinh: `SACH | NHIEU | PHUC HOI | |loi| x5 | sai so accel | sai so gyro`.
+
+Hai cot IMU ve **sai so**, khong ve tin hieu: nhieu IMU nho hon dao dong that
+hang tram lan nen ba duong tin hieu chong khit nhau, nhin khong ra gi. Duong xanh
+la (sau phuc hoi) **thap hon** duong cam (dau vao) nghia la model dang go bot nhieu.
+
+So sanh hai run:
+
+```python
+!python -m qjepa plot --run-dir {WORK}/v2_control   --title "control"
+!python -m qjepa plot --run-dir {WORK}/v2_treatment --title "treatment"
+```
+
+---
+
 ## Cell 9 — Danh gia va export
 
 ```python
