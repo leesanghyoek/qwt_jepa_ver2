@@ -1,0 +1,14 @@
+# Ket qua chay: checkpoint, log, anh - khong day len repo
+outputs/
+*.pt
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Moi truong
+.venv/
+.vscode/

@@ -1,0 +1,136 @@
+schema_version: 3
+experiment_name: qwt_jepa_balanced_imu
+seed: 42
+output_dir: outputs/balanced
+data:
+  dataset: tartanair
+  root: null
+  camera_id: lcam_front
+  image_size:
+  - 256
+  - 256
+  imu_window_samples: 128
+  imu_rate_hz: 100.0
+  image_rate_hz: 10.0
+  window_mode: centered_offline
+  max_relative_dt_deviation: 0.01
+  max_center_error_in_imu_dt: 1.0
+  split_ratio:
+  - 0.8
+  - 0.1
+  - 0.1
+  train_shuffle_windows: true
+  imu_std_floor:
+  - 0.001
+  - 0.001
+  - 0.001
+  - 0.0001
+  - 0.0001
+  - 0.0001
+  allow_imu_padding: false
+  allow_automatic_window_change: false
+transform:
+  image: qwt
+  image_levels: 1
+  imu: dwt_haar_1d
+  imu_levels: 1
+  compute_dtype: float32
+  allow_silent_fallback: false
+model:
+  encoder_channels:
+  - 32
+  - 64
+  - 96
+  - 128
+  embedding_dim: 128
+  groupnorm_groups: 8
+  imu_summary_bins: 4
+  fusion: gated_mlp
+  fusion_hidden_dim: 256
+  cross_modal: true
+  gate_bias_init: -2.0
+  predictor_hidden_dim: 256
+  dropout: 0.0
+  zero_init_coefficient_heads: true
+  mask_ratio: 0.0
+  time_metadata_dim: 3
+corruption:
+  profile: mild
+  independent_modalities: true
+  clean_probability_each_modality: 0.1
+  image_parameter_scope: one_second_camera_segment
+  imu_parameter_scope: trajectory_realization
+  validation_realization: 0
+  image:
+    blur_sigma_px:
+    - 0.3
+    - 1.0
+    gaussian_std:
+    - 0.0078431372549
+    - 0.0313725490196
+    downsample_probability: 0.0
+    downsample_scale:
+    - 0.5
+    - 1.0
+    jpeg_probability: 0.0
+  imu:
+    accel_noise_std:
+    - 0.02
+    - 0.1
+    gyro_noise_std:
+    - 0.001
+    - 0.005
+    bias_enabled: false
+    drift_enabled: false
+    spike_enabled: false
+loss:
+  smooth_l1_beta: 1.0
+  image_weight: 1.0
+  imu_weight: 100.0
+  jepa_start_weight: 0.01
+  jepa_max_weight: 0.1
+  jepa_ramp_updates: 1000
+  jepa_target_norm_eps: 1.0e-05
+  edge_weight: 0.0
+  imu_delta_weight: 0.0
+  variance_weight: 0.0
+  variance_gamma: 0.5
+train:
+  optimizer: adamw
+  learning_rate: 0.0002
+  betas:
+  - 0.9
+  - 0.999
+  weight_decay: 0.0001
+  no_decay_bias_and_norm: true
+  batch_size: 4
+  gradient_accumulation: 2
+  grad_clip_norm: 1.0
+  precision: fp32
+  num_workers: 0
+  max_optimizer_steps: 10000
+  stage_a_optimizer_steps: 2000
+  stage_b_optimizer_steps: 8000
+  scheduler: warmup_cosine
+  warmup_fraction: 0.05
+  minimum_lr: 1.0e-06
+  teacher_momentum_start: 0.99
+  teacher_momentum_end: 0.999
+  initialize_teacher_at_stage_b: true
+  validation_every_updates: 500
+  checkpoint_every_updates: 500
+  validation_batches: 32
+evaluation:
+  image_data_range: 1.0
+  image_border_crop: 0
+  image_metric_clamp: true
+  imu_merge: normalized_triangular_overlap_add
+  trajectory_equal_weight: true
+  minimum_fixed_feature_bank: 64
+  test_realizations:
+  - 0
+  - 1
+  - 2
+  clean_image_mae_tolerance: 0.00392156862745
+  clean_accel_rmse_tolerance: 0.02
+  clean_gyro_rmse_tolerance: 0.001
