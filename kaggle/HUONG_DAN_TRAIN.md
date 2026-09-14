@@ -9,7 +9,8 @@ IMU 100 Hz · camera 10 Hz · acc.npy CO trong luc · anh khop cam_time
 ```
 
 Uoc tinh quy mo: ~65.700 anh, loai ~2.300 o bien trajectory → **~63.000 sample**.
-Voi batch 8 thi ~6.300 step/epoch, nen **10.000 step ≈ 1,6 epoch**.
+Voi **effective batch 8** thi ~6.300 step/epoch, nen **10.000 step ≈ 1,6 epoch**.
+Con so nay khong doi du chay 1 hay 2 GPU — xem muc "Da GPU" ben duoi.
 
 **Settings notebook:** Accelerator `GPU T4 x2` · Internet `ON` · Add data:
 dataset `tartanairkhoi`.
@@ -22,8 +23,13 @@ dataset `tartanairkhoi`.
 import subprocess, torch, sys, os
 print(subprocess.run(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader'],
                      capture_output=True, text=True).stdout.strip())
+n = torch.cuda.device_count()
 print('torch', torch.__version__, '| cuda', torch.cuda.is_available(), '| cpu', os.cpu_count())
+print(f'>>> SO GPU = {n}', '-> se dung DDP' if n > 1 else '-> chay mot process')
 ```
+
+Neu `SO GPU = 1` ma ban muon hai: **Settings → Accelerator → GPU T4 x2**, roi
+restart session. Code chay dung voi ca hai truong hop, chi khac toc do.
 
 ---
 
@@ -105,12 +111,13 @@ hash khac.
 ## Cell 6 — Gate G2 + do toc do that (~2 phut)
 
 ```python
-import time
+import time, torch
 t0 = time.time()
 !python -m qjepa smoke-train --config {CONFIG} --manifest {MANIFEST} \
     --steps 50 --output-dir {WORK}/smoke
 dt = time.time() - t0
 print(f'\n~{dt/50:.3f} s/step  ->  10.000 step ~ {dt/50*10000/3600:.1f} gio')
+print(f'(do tren 1 process; voi {torch.cuda.device_count()} GPU thi Cell 8 nhanh hon)')
 ```
 
 Phai thay `G2 finite: True` va phan lon tensor tham so da doi.
@@ -141,20 +148,33 @@ Neu muon nhanh IMU thuc su hoc, chay them mot lan voi `configs/kaggle_stage_c.ya
 
 ## Cell 8 — TRAIN (phan chinh)
 
-**Da GPU tu dong.** `--gpus auto` (mac dinh) dung het GPU dang co: T4 x2 → hai
-process DDP, may mot GPU → chay thang. Ep mot GPU bang `--gpus 1`.
+### Da GPU — tu dong, khong phai sua gi
 
-`batch_size` la batch **moi rank**. De hai cau hinh so sanh duoc, config Kaggle
-dat `batch 4 × accum 2`, va khi chay 2 GPU thi accum tu dong giam con 1:
+`--gpus auto` la **mac dinh**:
 
-| | batch/rank | accum | rank | **effective batch** |
+| May co | Hanh vi |
+| --- | --- |
+| 1 GPU | chay mot process, khong khoi tao DDP |
+| 2 GPU (T4 x2) | tu khoi dong lai bang `torchrun`, moi GPU mot process, dong bo bang DDP |
+
+Ep mot GPU: `--gpus 1`. Ep hai: `--gpus 2` (bao loi neu may khong du).
+
+**Effective batch giu nguyen** du chay may GPU. `batch_size` trong config la batch
+**moi rank**, va `gradient_accumulation` tu chia cho so GPU:
+
+| | batch/rank | × accum | × rank | = **effective batch** |
 | --- | ---: | ---: | ---: | ---: |
 | 1 GPU | 4 | 2 | 1 | **8** |
 | 2 GPU | 4 | 1 | 2 | **8** |
 
-Nho vay run 1 GPU va run 2 GPU **so sanh truc tiep duoc**. Neu ban doi
-`gradient_accumulation` thanh so le, code se **canh bao** rang effective batch
-doi va hai run khong con so sanh duoc.
+Nho vay run 1 GPU va run 2 GPU cho cung effective batch, cung lich learning rate
+va cung so step. Neu ban doi `gradient_accumulation` thanh so **khong chia het**
+cho so GPU, code in `CANH BAO` rang effective batch se doi va hai run khong con
+so sanh truc tiep duoc.
+
+> **Ablation phai dung CUNG mot `--gpus`.** Effective batch giong nhau, nhung thu
+> tu du lieu thi khac (`DistributedSampler` khac shuffle thuong). Chay control
+> tren 1 GPU roi treatment tren 2 GPU la **khong cong bang**.
 
 ```python
 import pathlib
@@ -169,13 +189,31 @@ print('resume tu:', PREV or '(phien dau, train tu dau)')
     --output-dir {WORK}/main {resume}
 ```
 
-Voi 2 GPU se thay dong:
+Voi 2 GPU, **ba dong dau** phai la:
 
 ```
-[dist] phat hien 2 GPU -> chay lai bang torchrun: ...
-[dist] gradient_accumulation 2 -> 1 de giu effective batch khong doi tren 2 GPU
-[dist] 2 GPU | batch/rank 4 | accum 1 | effective batch 8
+[dist] phat hien 2 GPU -> chay lai bang torchrun:
+  /usr/bin/python3 -m torch.distributed.run --nproc_per_node=2 --standalone ...
+  [dist] gradient_accumulation 2 -> 1 de giu effective batch khong doi tren 2 GPU
+  [dist] 2 GPU | batch/rank 4 | accum 1 | effective batch 8
 ```
+
+Dong dau do CLI in truoc khi khoi dong lai; hai dong sau do rank 0 in ben trong
+torchrun.
+
+Khong thay ba dong nay nghia la dang chay **mot** GPU — kiem lai Cell 0.
+
+Log train sau do chi do **rank 0** in ra, nen nhin giong het run mot GPU. Do la
+dung: hai rank duoc dong bo gradient moi optimizer step nen tham so luon giong
+nhau, va chi rank 0 ghi checkpoint de hai process khong dam nhau khi ghi file.
+
+Kiem nhanh 2 GPU co that su duoc dung khong (chay trong luc train o cell khac):
+
+```python
+!nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv
+```
+
+Ca hai dong phai co `utilization` khac 0.
 
 Lich hai stage (tu dong theo config):
 
@@ -241,15 +279,15 @@ PARENT = f'{WORK}/main/last.pt'
 
 # Dong gop cua JEPA          (chi khac: stage_b = 0, lambda_J luon 0)
 !python -m qjepa train --config configs/kaggle_no_jepa.yaml --manifest {MANIFEST} \
-    --init {PARENT}
+    --init {PARENT} --gpus auto
 
 # Dong gop cua cross-modal fusion   (chi khac: cross_modal = false)
 !python -m qjepa train --config configs/kaggle_no_cross.yaml --manifest {MANIFEST} \
-    --init {PARENT}
+    --init {PARENT} --gpus auto
 
 # Dong gop cua QWT                  (chi khac: transform.image = Haar 12 kenh)
 !python -m qjepa train --config configs/kaggle_haar.yaml --manifest {MANIFEST} \
-    --init {PARENT}
+    --init {PARENT} --gpus auto
 ```
 
 > **Dung cac config `configs/kaggle_*.yaml`, khong dung `no_jepa.yaml` /
@@ -262,9 +300,9 @@ Jacobian regularization (themjacobian v2) — control va treatment tu **cung** p
 
 ```python
 !python -m qjepa train --config configs/kaggle_v2_control.yaml   --manifest {MANIFEST} \
-    --init {PARENT}
+    --init {PARENT} --gpus auto
 !python -m qjepa train --config configs/kaggle_v2_treatment.yaml --manifest {MANIFEST} \
-    --init {PARENT}
+    --init {PARENT} --gpus auto
 
 # Probe decoder tren backbone dong bang, CUNG init hash cho ca hai
 !python -m qjepa train-probe --config configs/kaggle_v2_probe.yaml --manifest {MANIFEST} \
