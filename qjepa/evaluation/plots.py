@@ -121,7 +121,7 @@ def diagnose(train: list[dict], val: list[dict]) -> list[tuple[str, str, str]]:
 
 
 def plot_training(run_dir: str | Path, out_path: str | Path | None = None,
-                  title: str | None = None) -> Path:
+                  title: str | None = None, dpi: int = 110) -> Path:
     """Ve bang do thi chan doan tu `train_log.jsonl` va `validation.jsonl`."""
     import matplotlib
     matplotlib.use("Agg")
@@ -253,7 +253,7 @@ def plot_training(run_dir: str | Path, out_path: str | Path | None = None,
         ax[8].text(0.27, y0 - 0.042, msg, fontsize=7, color="dimgray", va="top")
 
     plt.tight_layout(rect=[0, 0, 1, 0.97])
-    plt.savefig(out_path, dpi=110, bbox_inches="tight")
+    plt.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return out_path
 
@@ -269,7 +269,7 @@ def print_diagnosis(run_dir: str | Path) -> list[tuple[str, str, str]]:
 
 
 def plot_samples(model, cfg, samples, out_path: str | Path, *, device="cpu",
-                 num: int = 4, realization: int = 0) -> Path:
+                 num: int = 4, realization: int = 0, dpi: int = 95) -> Path:
     """Panel clean / bad / restored / |error| tren cac sample CO DINH.
 
     Dung cung sample va cung realization moi lan goi, de so sanh giua cac
@@ -334,6 +334,6 @@ def plot_samples(model, cfg, samples, out_path: str | Path, *, device="cpu",
     model.train()
     out_path = Path(out_path)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=95, bbox_inches="tight")
+    plt.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return out_path

@@ -400,7 +400,7 @@ def cmd_plot(args) -> None:
         )
     print(f"=== CHAN DOAN: {run_dir} ===")
     print_diagnosis(run_dir)
-    curves = plot_training(run_dir, title=args.title)
+    curves = plot_training(run_dir, title=args.title, dpi=args.dpi)
     print(f"\n-> {curves}")
 
     if args.checkpoint:
@@ -417,7 +417,7 @@ def cmd_plot(args) -> None:
         model.load_state_dict(payload["model"], strict=True)
         panel = plot_samples(
             model, cfg, built["samples"][args.split], run_dir / "samples.png",
-            device=device, num=args.num_samples,
+            device=device, num=args.num_samples, dpi=args.dpi,
             realization=cfg.corruption.validation_realization,
         )
         print(f"-> {panel}")
@@ -516,6 +516,8 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--output-dir", default=None)
     pl.add_argument("--split", default="valid")
     pl.add_argument("--num-samples", type=int, default=4)
+    pl.add_argument("--dpi", type=int, default=110,
+                    help="tang len 160-200 neu can phong to doc chi tiet")
     pl.set_defaults(func=cmd_plot)
 
     x = sub.add_parser("export", help="export checkpoint inference")

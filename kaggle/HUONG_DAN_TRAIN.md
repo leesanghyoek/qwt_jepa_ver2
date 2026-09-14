@@ -300,6 +300,76 @@ So sanh hai run:
 
 ---
 
+## Cell 8c — Lay anh ra khoi Kaggle
+
+Anh **da nam san** trong `/kaggle/working/...`. Van de chi la tai ve. Bon cach,
+xep theo do tin cay:
+
+### Cach 1 — Panel Output ben phai (tin cay nhat)
+
+Thanh ben phai notebook → tab **Output** (hoac **Data → Output**) → duyet toi
+`outputs/main/` → bam vao file → nut **Download**. Khong can chay gi them.
+
+Neu khong thay file vua tao, bam nut **refresh** o goc panel do.
+
+### Cach 2 — Link tai ngay trong cell
+
+```python
+from IPython.display import FileLink, display
+import pathlib
+
+for p in sorted(pathlib.Path(WORK).rglob('*.png')):
+    print(f'{p.stat().st_size/1024:7.0f} KB  {p}')
+    display(FileLink(str(p)))
+```
+
+Bam vao link la tai ve may. Chi hoat dong voi file **trong `/kaggle/working`**.
+
+### Cach 3 — Gop tat ca vao mot file zip
+
+Tien khi co nhieu anh:
+
+```python
+import shutil, pathlib
+from IPython.display import FileLink, display
+
+shutil.make_archive('/kaggle/working/dothi', 'zip', WORK, '.')
+z = pathlib.Path('/kaggle/working/dothi.zip')
+print(f'{z.stat().st_size/2**20:.1f} MB')
+display(FileLink(str(z)))
+```
+
+> Zip ca `WORK` se gom luon checkpoint `.pt` (~27 MB moi file). Muon chi lay anh:
+> ```python
+> import zipfile, pathlib
+> with zipfile.ZipFile('/kaggle/working/dothi.zip', 'w') as z:
+>     for p in pathlib.Path(WORK).rglob('*.png'):
+>         z.write(p, p.relative_to(WORK))
+> ```
+
+### Cach 4 — Save Version roi tai tu Output
+
+**Save Version → Save & Run All (Commit)**. Xong thi vao trang notebook → tab
+**Output** → tai tung file hoac tai ca thu muc. Cach nay giu duoc ban ghi lau dai
+va la thu ban dung lam input cho phien sau.
+
+### Neu chi muon NHIN ro hon, khong can tai
+
+Do thi mac dinh 110 dpi. Tang len de doc duoc chu nho:
+
+```python
+!python -m qjepa plot --run-dir {WORK}/main --dpi 180
+```
+
+Hoac phong to ngay trong cell:
+
+```python
+from IPython.display import Image, display
+display(Image(f'{WORK}/main/training_curves.png', width=1600))
+```
+
+---
+
 ## Cell 9 — Danh gia va export
 
 ```python
