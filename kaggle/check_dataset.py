@@ -10,22 +10,53 @@ NEED = ["acc", "gyro", "imu_time", "cam_time"]
 report = {}
 
 # ---- 1. Tim data root -------------------------------------------------------
-def find_roots():
-    out = []
-    for base in sorted(pathlib.Path("/kaggle/input").glob("*")):
-        for cand in [base] + sorted(p for p in base.glob("*") if p.is_dir()):
-            if any(cand.glob(f"*/Data_*/P*/{IMG_DIR}")):
-                out.append(cand)
-    return out
+def find_roots(base="/kaggle/input", max_depth=10):
+    """Tim DE QUY moi thu muc <root>/<env>/<Data_x>/<Pxxx>/image_lcam_front.
+
+    Khong gia dinh dataset nam o cap nao: Kaggle co the long them
+    /kaggle/input/datasets/<user>/<slug>/...
+    """
+    base = pathlib.Path(base)
+    if not base.is_dir():
+        return []
+    roots, base_depth = set(), len(base.parts)
+    for dirpath, dirnames, _ in os.walk(base, followlinks=True):
+        d = pathlib.Path(dirpath)
+        if len(d.parts) - base_depth > max_depth:
+            dirnames[:] = []
+            continue
+        if IMG_DIR in dirnames:
+            # d = <root>/<env>/<Data_x>/<Pxxx>  ->  root = d.parents[2]
+            if len(d.parts) >= 4:
+                roots.add(d.parents[2])
+            dirnames[:] = [x for x in dirnames if x != IMG_DIR]   # khong chui vao thu muc anh
+    return sorted(roots)
+
+
+def show_tree(base="/kaggle/input", max_depth=6, max_per_level=8):
+    """In cay thu muc gioi han, de thay cau truc that khi khong tim duoc."""
+    base = pathlib.Path(base)
+    base_depth = len(base.parts)
+    for dirpath, dirnames, filenames in os.walk(base, followlinks=True):
+        d = pathlib.Path(dirpath)
+        depth = len(d.parts) - base_depth
+        if depth > max_depth:
+            dirnames[:] = []
+            continue
+        dirnames[:] = sorted(dirnames)[:max_per_level]
+        pngs = sum(1 for f in filenames if f.endswith(".png"))
+        extra = f"  [{len(filenames)} file" + (f", {pngs} png" if pngs else "") + "]" if filenames else ""
+        print("   " + "  " * depth + f"{d.name}/{extra}")
+
 
 roots = find_roots()
 print("=" * 68)
 print("1. DATA ROOT")
 if not roots:
-    print("  !! KHONG TIM THAY. Cac thu muc trong /kaggle/input:")
-    for p in sorted(pathlib.Path("/kaggle/input").glob("*")):
-        print("     ", p.name, "->", [c.name for c in sorted(p.glob("*"))[:6]])
-    raise SystemExit("Dung lai: chua Add Input dataset, hoac cau truc khac du kien.")
+    print("  !! KHONG TIM THAY thu muc dang <env>/Data_*/P*/image_lcam_front")
+    print("  Cau truc that trong /kaggle/input (toi da 6 cap):")
+    show_tree()
+    raise SystemExit("Dung lai: gui lai cay thu muc tren de sua duong dan.")
 ROOT = roots[0]
 print(f"  {ROOT}")
 if len(roots) > 1:
