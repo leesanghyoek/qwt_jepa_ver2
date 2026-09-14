@@ -20,7 +20,7 @@ IMU nhieu  ──> Haar 1D          ──> CNN1D encoder ─┘                
 | G1 | QWT/Haar round-trip va gradient cua inverse | **PASS** — [QWT_AUDIT.md](QWT_AUDIT.md) |
 | G2 | Forward/backward, EMA, teacher tach biet | **PASS** |
 | G3 | Overfit nhom co dinh | **MOT PHAN** — anh dat, IMU chua; xem [TRAINING_REPORT.md](TRAINING_REPORT.md) |
-| G4 | Pilot held-out + JEPA | **NOT_RUN** — can GPU Kaggle |
+| G4 | Pilot held-out + JEPA | **PASS** — 2x T4, ca ba `r` < 1 |
 | G5 | Save/load/resume/export | **PASS** |
 
 100 test: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q`
@@ -29,9 +29,18 @@ IMU nhieu  ──> Haar 1D          ──> CNN1D encoder ─┘                
 > ~9,6e-05 o muc tham so. Tren CPU sai khac la 0,0 va resume tai epoch boundary
 > trung khop **tung bit**. Dung chenh lech nho hon ~1e-4 de ket luan khac biet.
 
-**Chua co bang chung** ve: chat luong phuc hoi tren held-out, loi ich cua JEPA,
-loi ich cua cross-modal fusion, hay loi ich cua QWT so voi Haar. Nhung cau hoi
-do can cac run trong bang ablation ben duoi.
+**Ket qua pilot dau tien** (Kaggle 2x T4, 14 env, 10.000 step, 21,6 phut):
+
+| Nguon | `r = MSE(out)/MSE(nhieu)` | Giam MSE |
+| --- | ---: | ---: |
+| Anh | 0,4925 | **50,8%** (PSNR 37,5 dB, SSIM 0,947) |
+| Accel | 0,5636 | **43,6%** |
+| Gyro | 0,9962 | 0,4% |
+
+Chi tiet: [TRAINING_REPORT.md](TRAINING_REPORT.md) muc 0.
+
+**Van chua co bang chung** ve loi ich rieng cua JEPA, cua cross-modal fusion, hay
+cua QWT so voi Haar — can cac run ablation cung budget o bang ben duoi.
 
 > Kien truc chi tiet — luong du lieu, cong thuc tung khoi, so tham so tung module:
 > **[KIEN_TRUC.md](KIEN_TRUC.md)**

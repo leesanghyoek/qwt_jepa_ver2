@@ -55,9 +55,15 @@ def setup(info: DistInfo | None = None) -> DistInfo:
     n_gpu = torch.cuda.device_count()
     use_cuda = n_gpu > 0 and info.world_size <= n_gpu
     backend = "nccl" if use_cuda and dist.is_nccl_available() else "gloo"
-    dist.init_process_group(backend=backend)
     if use_cuda:
         torch.cuda.set_device(info.local_rank)
+        # Truyen device_id de khoi canh bao "barrier(): using the device under
+        # current context" va de NCCL biet ngay GPU cua rank nay.
+        dist.init_process_group(
+            backend=backend, device_id=torch.device(f"cuda:{info.local_rank}")
+        )
+    else:
+        dist.init_process_group(backend=backend)
     return info
 
 

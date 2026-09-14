@@ -1,8 +1,69 @@
 # TRAINING_REPORT.md
 
-Ban ghi cac gate da chay tren may local (RTX, CUDA 13.0, torch 2.13.0, FP32).
-**Chua chay pilot Stage A/B day du** — phan do can GPU Kaggle va duoc danh dau
-`NOT_RUN`, khong duoc doc thanh ket qua.
+## 0. KET QUA PILOT DAU TIEN — Kaggle 2x T4, 14 environment
+
+Chay ngay 15/09/2026. **Day la ket qua that dau tien tren du lieu day du**, thay
+cho trang thai `NOT_RUN` truoc do cua G4.
+
+| | |
+| --- | --- |
+| Du lieu | 14 environment, 166 trajectory, ~63.000 sample |
+| Cau hinh | `kaggle_balanced.yaml` (`imu_weight=100`), QWT, cross-modal, JEPA |
+| Phan cung | Kaggle **2x T4**, DDP/NCCL, fp16 |
+| Budget | 10.000 step (Stage A 2.000 + Stage B 8.000) = **1,58 epoch** |
+| Thoi gian | **1.298 s (21,6 phut)** — 129,8 ms/step, 61,6 sample/s |
+
+### Ket qua validation
+
+| step | PSNR | SSIM | `r_image` | `r_acc` | `r_gyro` | ca ba < 1 |
+| ---: | ---: | ---: | ---: | ---: | ---: | :--: |
+| 1.000 | 34,08 | 0,9136 | 0,6396 | 0,9363 | 1,0047 | khong |
+| 2.000 | 35,51 | 0,9273 | 0,5585 | 0,8106 | 1,0031 | khong |
+| 4.000 | 36,33 | 0,9386 | 0,5112 | 0,6866 | 1,0023 | khong |
+| **6.000** | 36,82 | 0,9426 | 0,4944 | 0,6101 | **0,9992** | **CO** |
+| 8.000 | **37,59** | 0,9453 | **0,4880** | 0,5705 | 0,9973 | CO |
+| 10.000 | 37,49 | **0,9467** | 0,4925 | **0,5636** | **0,9962** | CO |
+
+**Ket luan cuoi run:**
+
+| Nguon | `r` | Giam MSE |
+| --- | ---: | ---: |
+| Anh | 0,4925 | **50,8%** |
+| Accel | 0,5636 | **43,6%** |
+| Gyro | 0,9962 | **0,4%** |
+
+Ca ba ty so **deu < 1** tu step 6.000, nen `best_joint.pt` da duoc luu. Khong co
+dau hieu overfit: validation MAE 0,01539 -> 0,01422 trong khi train giam 22,9%.
+Gradient norm on dinh (trung vi 0,067, max 0,165).
+
+### Hai du doan truoc do: mot dung, mot sai
+
+**Dung — gyro gan nhu thoai hoa o profile `mild`.** Muc 4.2 du doan dieu nay tu
+SNR: gyro 45 dB, va nhieu "gap ghenh" chi bang 0,09x tin hieu sach. Ket qua that:
+`r_gyro = 0,9962`, tuc **0,4%**. Khong phai loi kien truc — bai toan gyro o muc
+nhieu nay gan nhu khong co gi de khu.
+
+**Sai — toi da danh gia thap nhanh accel.** Gate overfit tren 16 sample cho
+accel +9,58% (muc 4), va toi da dung con so do de du doan. Tren du lieu day du
+voi 10.000 step, accel dat **+43,6%**. Overfit tren 16 sample la phep thu
+*memorize*, **khong du doan duoc** hanh vi khi co 63.000 sample va nhieu step hon.
+Khong nen ngoai suy tu gate G3 sang ket qua that.
+
+### Chua ket luan duoc gi tu run nay
+
+- **Mot seed, mot run.** Chua co uncertainty theo trajectory hay multi-seed.
+- **Chua co ablation nao.** Khong the quy 50,8% cho JEPA, cho cross-modal fusion
+  hay cho QWT — can `kaggle_no_jepa`, `kaggle_no_cross`, `kaggle_haar` cung budget.
+- Chua kiem `clean_*_tolerance` (giu du lieu sach) tren bo danh gia rieng.
+- Chua chay tren split `test`; moi so lieu tren day la `valid`.
+- PSNR dat dinh o step 8.000 (37,59) roi giam nhe con 37,49. Muc giam nam trong
+  dao dong giua cac lan validation, chua du de ket luan bat dau overfit.
+
+---
+
+## Phan con lai: cac gate chay tren may local
+
+Ban ghi cac gate da chay tren may local (RTX 4060, CUDA 13.0, torch 2.13.0, FP32).
 
 ## 1. Du lieu thuc su dung
 
@@ -71,7 +132,7 @@ Peak VRAM khi inference mot trajectory (batch 4): **148 MB**.
 | G1 transform | **PASS** | worst rel error 1,09e-07 (nguong 1e-5); gradcheck fp64 |
 | G2 forward/backward/EMA | **PASS** | 153/166 tensor doi sau 20 step, moi gia tri huu han |
 | G3 overfit | **MOT PHAN** | anh dat nguong, IMU khong — xem muc 4 |
-| G4 pilot held-out + JEPA | **NOT_RUN** | can GPU Kaggle |
+| G4 pilot held-out + JEPA | **PASS** | xem muc 0: ca ba `r` < 1 tren held-out, 2x T4 |
 | G5 save/load/resume/export | **PASS** | 15 test; resume tai epoch boundary trung khop **tung bit** |
 
 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q` → **51 passed**.
@@ -191,9 +252,10 @@ luc hoc that cua TartanAir, va bias/drift moi la che do loi IMU dang de khu.
 
 ## 6. Chua chay / chua chung minh
 
-- Pilot Stage A va Stage B day du tren held-out (G4).
-- Bat ky so lieu nao ve loi ich cua **JEPA** — `lambda_J` chua bao gio > 0 trong
-  mot run co ket qua. Teacher/EMA/predictor moi chi duoc kiem tra bang unit test.
+- ~~Pilot Stage A va Stage B day du tren held-out (G4)~~ — **da chay**, xem muc 0.
+- Bat ky so lieu nao ve loi ich cua **JEPA**. `lambda_J` da dat 0,10 trong run o
+  muc 0, nhung **chua co control** `kaggle_no_jepa` cung budget de so sanh, nen
+  khong the quy phan cai thien nao cho JEPA.
 - Loi ich cua **cross-modal fusion**: chua chay `no_cross.yaml`.
 - Loi ich cua **QWT** so voi Haar: chua chay `haar_baseline.yaml`.
 - Merge overlap cua ca trajectory va metric theo trajectory (muc 18.3) da co ham

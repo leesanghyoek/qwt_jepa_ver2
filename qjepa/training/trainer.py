@@ -179,10 +179,11 @@ class Trainer:
                 self.model,
                 device_ids=[self.dist.local_rank] if self.device.type == "cuda" else None,
                 output_device=self.dist.local_rank if self.device.type == "cuda" else None,
-                # Bat buoc: o Stage A hai predictor KHONG tham gia loss (lambda_J=0),
-                # va khi bat encoder sensitivity thi mot nhanh encoder co them mot
-                # duong forward phu. Khong bat co nay thi DDP bao loi reduction.
-                find_unused_parameters=True,
+                # O Stage A hai predictor KHONG tham gia loss (lambda_J = 0) nen
+                # DDP can co nay. Run chay THANG vao Stage B (stage_a = 0, vi du
+                # cac phase v2) thi predictor luon duoc dung -> tat di de bo mot
+                # lan duyet autograd graph moi iteration.
+                find_unused_parameters=cfg.train.stage_a_optimizer_steps > 0,
             )
         # Giu effective batch khong doi khi so GPU thay doi.
         self.accum, note = dstr.resolve_accumulation(
