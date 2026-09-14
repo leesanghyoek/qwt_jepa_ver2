@@ -141,6 +141,21 @@ Neu muon nhanh IMU thuc su hoc, chay them mot lan voi `configs/kaggle_stage_c.ya
 
 ## Cell 8 — TRAIN (phan chinh)
 
+**Da GPU tu dong.** `--gpus auto` (mac dinh) dung het GPU dang co: T4 x2 → hai
+process DDP, may mot GPU → chay thang. Ep mot GPU bang `--gpus 1`.
+
+`batch_size` la batch **moi rank**. De hai cau hinh so sanh duoc, config Kaggle
+dat `batch 4 × accum 2`, va khi chay 2 GPU thi accum tu dong giam con 1:
+
+| | batch/rank | accum | rank | **effective batch** |
+| --- | ---: | ---: | ---: | ---: |
+| 1 GPU | 4 | 2 | 1 | **8** |
+| 2 GPU | 4 | 1 | 2 | **8** |
+
+Nho vay run 1 GPU va run 2 GPU **so sanh truc tiep duoc**. Neu ban doi
+`gradient_accumulation` thanh so le, code se **canh bao** rang effective batch
+doi va hai run khong con so sanh duoc.
+
 ```python
 import pathlib
 
@@ -150,8 +165,16 @@ STEPS = 10000        # GIAM xuong neu Cell 6 cho thay khong kip 12h
 
 print('resume tu:', PREV or '(phien dau, train tu dau)')
 !python -m qjepa train --config {CONFIG} --manifest {MANIFEST} \
-    --steps {STEPS} --log-every 100 \
+    --steps {STEPS} --log-every 100 --gpus auto \
     --output-dir {WORK}/main {resume}
+```
+
+Voi 2 GPU se thay dong:
+
+```
+[dist] phat hien 2 GPU -> chay lai bang torchrun: ...
+[dist] gradient_accumulation 2 -> 1 de giu effective batch khong doi tren 2 GPU
+[dist] 2 GPU | batch/rank 4 | accum 1 | effective batch 8
 ```
 
 Lich hai stage (tu dong theo config):
@@ -260,6 +283,8 @@ Jacobian regularization (themjacobian v2) — control va treatment tu **cung** p
 | `checkpoint dung transform ... config dung ...` | Dang ghep run QWT voi run Haar. Chay rieng |
 | Loss `NaN` | Bao loi ro va dung; kiem `precision` va gradient clip |
 | RAM het khi build-manifest | Giam so trajectory, hoac build tung split |
+| `MKL_THREADING_LAYER=INTEL is incompatible` | Da xu ly san: code ep `GNU` cho process con cua torchrun |
+| Chi thay 1 GPU du co 2 | Kiem `torch.cuda.device_count()` o Cell 0; Kaggle phai chon `GPU T4 x2` |
 | `perturbation bi mat` (chi khi bat v2) | Bien do IMU qua lon so voi epsilon o FP32 |
 
 ---

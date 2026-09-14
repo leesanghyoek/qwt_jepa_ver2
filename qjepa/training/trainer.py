@@ -16,9 +16,10 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 
 from ..config import Config, config_hash, save_resolved
+from . import distributed as dstr
 from ..corruptions.image import ImageCorruptionConfig
 from ..corruptions.imu import ImuCorruptionConfig
 from ..data.dataset import PairedRestorationDataset, collate
@@ -157,17 +158,42 @@ class Trainer:
         *,
         device: str | torch.device = "cpu",
         manifest_hash: str = "",
+        dist: dstr.DistInfo | None = None,
     ) -> None:
         cfg.validate()
         self.cfg = cfg
+        self.dist = dist or dstr.DistInfo()
         self.device = torch.device(device)
         self.samples = samples
         self.manifest_hash = manifest_hash
         self.out_dir = Path(cfg.output_dir)
-        self.out_dir.mkdir(parents=True, exist_ok=True)
+        if self.dist.is_main:
+            self.out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Cung seed tren moi rank -> trong so khoi tao giong nhau truoc khi DDP dong bo.
         set_seed(cfg.seed)
         self.model = build_model(cfg, normalizer).to(self.device)
+        self.ddp = None
+        if self.dist.enabled:
+            self.ddp = torch.nn.parallel.DistributedDataParallel(
+                self.model,
+                device_ids=[self.dist.local_rank] if self.device.type == "cuda" else None,
+                output_device=self.dist.local_rank if self.device.type == "cuda" else None,
+                # Bat buoc: o Stage A hai predictor KHONG tham gia loss (lambda_J=0),
+                # va khi bat encoder sensitivity thi mot nhanh encoder co them mot
+                # duong forward phu. Khong bat co nay thi DDP bao loi reduction.
+                find_unused_parameters=True,
+            )
+        # Giu effective batch khong doi khi so GPU thay doi.
+        self.accum, note = dstr.resolve_accumulation(
+            max(1, cfg.train.gradient_accumulation), self.dist.world_size
+        )
+        if note and self.dist.is_main:
+            print(f"  [dist] {note}")
+        if self.dist.is_main and self.dist.enabled:
+            eff = cfg.train.batch_size * self.accum * self.dist.world_size
+            print(f"  [dist] {self.dist.world_size} GPU | batch/rank {cfg.train.batch_size} "
+                  f"| accum {self.accum} | effective batch {eff}")
         self.optimizer = torch.optim.AdamW(
             parameter_groups(self.model, cfg.train.weight_decay, cfg.train.no_decay_bias_and_norm),
             lr=cfg.train.learning_rate,
@@ -218,7 +244,8 @@ class Trainer:
         self.steps_in_epoch = 0    # de biet checkpoint co nam o epoch boundary khong
         self.best: dict[str, float] = {}
         self.history: list[dict] = []
-        save_resolved(cfg, self.out_dir / "resolved_config.yaml")
+        if self.dist.is_main:
+            save_resolved(cfg, self.out_dir / "resolved_config.yaml")
 
     # -- stage ------------------------------------------------------------
     @property
@@ -258,8 +285,24 @@ class Trainer:
         image_time = batch["image_time"].to(self.device, non_blocking=True)
         imu_times = batch["imu_times"].to(self.device, non_blocking=True)
 
-        out = self.model(image_bad, imu_bad, image_time, imu_times)
+        # Duong forward CHINH phai di qua wrapper DDP, neu khong reducer khong
+        # bao gio all-reduce gradient va moi rank se train doc lap.
+        net = self.ddp if self.ddp is not None else self.model
         imu_clean_norm = self.model.normalizer.normalize(imu_clean)
+
+        # Chuan bi duong PHU truoc, de tat ca di chung MOT lan goi forward:
+        # DDP yeu cau moi tham so can gradient phai duoc dung ben trong forward.
+        if lambda_j > 0:
+            self.ensure_teacher()
+        probe_kw, sens_meta = {}, None
+        if sens_source is not None and lambda_enc > 0:
+            probe_kw, sens_meta = self._prepare_probe(
+                batch, imu_bad, sens_source, microbatch_index
+            )
+        out = net(
+            image_bad, imu_bad, image_time, imu_times,
+            predict_latents=(lambda_j > 0), **probe_kw,
+        )
 
         l_image = image_loss(out["image_hat"], image_clean)
         l_imu, l_acc, l_gyro = imu_loss(
@@ -290,14 +333,11 @@ class Trainer:
             logs["loss_variance"] = l_var.item()
 
         if lambda_j > 0:
-            self.ensure_teacher()
             ti, tu = self.model.teacher_targets(image_clean, imu_clean)
-            pi = self.model.image_predictor(image_tokens(out["zi"]))
-            pu = self.model.imu_predictor(imu_tokens(out["zu"]))
             l_jepa, ji, ju = jepa_loss(
-                pi,
+                out["pred_image"],
                 image_tokens(ti),
-                pu,
+                out["pred_imu"],
                 imu_tokens(tu),
                 beta=self.weights.smooth_l1_beta,
                 eps=self.cfg.loss.jepa_target_norm_eps,
@@ -305,10 +345,8 @@ class Trainer:
             total = total + lambda_j * l_jepa
             logs.update({"loss_jepa": l_jepa.item(), "jepa_image": ji.item(), "jepa_imu": ju.item()})
 
-        if sens_source is not None and lambda_enc > 0:
-            l_enc, enc_logs = self._encoder_sensitivity_term(
-                batch, out, imu_bad, sens_source, microbatch_index
-            )
+        if sens_meta is not None:
+            l_enc, enc_logs = self._encoder_sensitivity_term(out, sens_source, sens_meta)
             multiplier = dict(zip(("image", "imu"), self.sens_cfg.modality_multipliers))[sens_source]
             total = total + lambda_enc * multiplier * l_enc
             logs.update(enc_logs)
@@ -317,23 +355,16 @@ class Trainer:
         logs["lambda_jepa"] = lambda_j
         return total, logs
 
-    def _encoder_sensitivity_term(
-        self, batch: dict, out: dict, imu_bad: torch.Tensor, source: str, microbatch_index: int
-    ) -> tuple[torch.Tensor, dict]:
-        """FD sensitivity tai FI/FU truoc fusion (themjacobian muc 6, 9.1).
-
-        Chi chay wavelet + encoder cua MOT modality; khong goi teacher, fusion
-        hay decoder them lan nua.
-        """
+    def _prepare_probe(
+        self, batch: dict, imu_bad: torch.Tensor, source: str, microbatch_index: int
+    ) -> tuple[dict, dict]:
+        """Tao dau vao perturbed. Goi TRUOC forward de probe di chung mot lan goi."""
         cfg = self.sens_cfg
         if source == "image":
             x = batch["image_bad"].to(self.device, non_blocking=True)
-            f_base = out["fi"]
         else:
-            # Perturb IMU o mien NORMALIZED — dung mien ma encoder that su nhan.
+            # Perturb IMU o mien NORMALIZED — mien ma encoder that su nhan.
             x = self.model.normalizer.normalize(imu_bad)
-            f_base = out["fu"]
-
         context = (
             self.cfg.experiment_name, self.step, self.epoch,
             batch["sample_id"][0], microbatch_index, source,
@@ -346,10 +377,17 @@ class Trainer:
             alpha=cfg.alpha,
             minimum_energy=cfg.minimum_input_energy,
         )
-        f_probe = (
-            self.model.encode_image_dense(xp) if source == "image"
-            else self.model.encode_imu_dense_normalized(xp)
-        )
+        key = "probe_image" if source == "image" else "probe_imu_norm"
+        return {key: xp}, {"energy": energy, "clipped": clipped}
+
+    def _encoder_sensitivity_term(
+        self, out: dict, source: str, meta: dict
+    ) -> tuple[torch.Tensor, dict]:
+        """FD sensitivity tai FI/FU truoc fusion (themjacobian muc 6, 9.1)."""
+        cfg = self.sens_cfg
+        f_base = out["fi"] if source == "image" else out["fu"]
+        f_probe = out["probe_fi"] if source == "image" else out["probe_fu"]
+        energy = meta["energy"]
         l_enc, gain = encoder_fd_loss(f_base, f_probe, energy, ln_eps=cfg.layer_norm_eps)
         raw_gain = raw_feature_fd_gain(f_base, f_probe, energy)
         return l_enc, {
@@ -357,27 +395,36 @@ class Trainer:
             "sens_gain_normalized": float(gain.mean()),
             "sens_gain_raw": float(raw_gain.mean()),
             "sens_input_energy": float(energy.mean()),
-            "sens_clipped_fraction": clipped,
+            "sens_clipped_fraction": meta["clipped"],
         }
 
     # -- train ------------------------------------------------------------
     def train(self, max_steps: int | None = None, log_every: int = 25) -> dict:
         cfg = self.cfg
         target = max_steps or cfg.train.max_optimizer_steps
-        accum = max(1, cfg.train.gradient_accumulation)
+        accum = self.accum
         started = time.time()
 
         while self.step < target:
             dataset = make_dataset(
                 self.samples["train"], cfg, realization=self.epoch
             )
+            sampler = None
+            if self.dist.enabled:
+                # Moi rank nhan mot phan khac nhau; set_epoch de shuffle doi moi epoch.
+                sampler = DistributedSampler(
+                    dataset, num_replicas=self.dist.world_size, rank=self.dist.rank,
+                    shuffle=cfg.data.train_shuffle_windows, drop_last=True,
+                )
+                sampler.set_epoch(self.epoch)
             loader = DataLoader(
                 dataset,
                 batch_size=cfg.train.batch_size,
-                shuffle=cfg.data.train_shuffle_windows,
+                shuffle=(sampler is None and cfg.data.train_shuffle_windows),
+                sampler=sampler,
                 num_workers=cfg.train.num_workers,
                 collate_fn=collate,
-                drop_last=False,
+                drop_last=self.dist.enabled,
                 pin_memory=(self.device.type == "cuda"),
             )
             self.model.train()
@@ -404,9 +451,13 @@ class Trainer:
             self.epoch += 1
             self.steps_in_epoch = 0
             # Epoch boundary: diem duy nhat resume duoc chinh xac.
+            if self.dist.is_main:
+                self.save_checkpoint("last.pt")
+        if self.dist.is_main:
             self.save_checkpoint("last.pt")
-        self.save_checkpoint("last.pt")
-        return {"steps": self.step, "epochs": self.epoch, "seconds": time.time() - started}
+        dstr.barrier()
+        return {"steps": self.step, "epochs": self.epoch, "seconds": time.time() - started,
+                "world_size": self.dist.world_size}
 
     def _optimizer_step(self, microbatches: list[dict], log_every: int, started: float) -> None:
         cfg = self.cfg
@@ -425,18 +476,29 @@ class Trainer:
         n = len(microbatches)
         agg: dict[str, float] = {}
         sens_text: dict[str, str] = {}
+        import contextlib
+
         for idx, mb in enumerate(microbatches):
             kw = dict(sens_source=sens_source, lambda_enc=lambda_enc, microbatch_index=idx)
-            if self.amp_dtype is not None:
-                with torch.autocast(self.device.type, dtype=self.amp_dtype):
+            # Chi all-reduce gradient o microbatch CUOI cua nhom accumulation.
+            last = idx == n - 1
+            sync_ctx = (
+                self.ddp.no_sync() if (self.ddp is not None and not last)
+                else contextlib.nullcontext()
+            )
+            with sync_ctx:
+                if self.amp_dtype is not None:
+                    with torch.autocast(self.device.type, dtype=self.amp_dtype):
+                        loss, logs = self.compute_loss(mb, lambda_j, **kw)
+                else:
                     loss, logs = self.compute_loss(mb, lambda_j, **kw)
-            else:
-                loss, logs = self.compute_loss(mb, lambda_j, **kw)
-            sens_text.update({k: v for k, v in logs.items() if isinstance(v, str)})
-            logs = {k: v for k, v in logs.items() if not isinstance(v, str)}
-            if not torch.isfinite(loss):
-                raise FloatingPointError(f"loss khong huu han tai step {self.step}: {loss.item()}")
-            self.scaler.scale(loss / n).backward()
+                sens_text.update({k: v for k, v in logs.items() if isinstance(v, str)})
+                logs = {k: v for k, v in logs.items() if not isinstance(v, str)}
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(
+                        f"loss khong huu han tai step {self.step}: {loss.item()}"
+                    )
+                self.scaler.scale(loss / n).backward()
             for k, v in logs.items():
                 agg[k] = agg.get(k, 0.0) + v / n
 
@@ -481,7 +543,7 @@ class Trainer:
                 "elapsed_s": time.time() - started,
             }
         )
-        if self.step % log_every == 0 or self.step == 1:
+        if (self.step % log_every == 0 or self.step == 1) and self.dist.is_main:
             self.history.append(agg)
             print(
                 f"[{agg['stage']}] step {self.step:6d}/{cfg.train.max_optimizer_steps} "
@@ -494,7 +556,9 @@ class Trainer:
             self._append_jsonl("train_log.jsonl", agg)
         if cfg.train.validation_every_updates and self.step % cfg.train.validation_every_updates == 0:
             self.validate()
-        if cfg.train.checkpoint_every_updates and self.step % cfg.train.checkpoint_every_updates == 0:
+        if (cfg.train.checkpoint_every_updates
+                and self.step % cfg.train.checkpoint_every_updates == 0
+                and self.dist.is_main):
             self.save_checkpoint("last.pt")
 
     # -- validation -------------------------------------------------------
@@ -561,6 +625,8 @@ class Trainer:
         result["improves_all_three"] = bool(
             result["r_image"] < 1 and result["r_acc"] < 1 and result["r_gyro"] < 1
         )
+        if not self.dist.is_main:
+            return result
         print(
             f"  [val step {self.step}] psnr {result.get('image_psnr', float('nan')):.3f} "
             f"ssim {result.get('image_ssim', float('nan')):.4f} | "
@@ -628,10 +694,14 @@ class Trainer:
         }
 
     def save_checkpoint(self, name: str, extra: dict | None = None) -> Path:
+        """Chi rank 0 ghi file. Rank khac tra ve duong dan ma khong ghi, de hai
+        process khong cung viet `last.tmp` roi dam nhau khi rename."""
+        path = self.out_dir / name
+        if not self.dist.is_main:
+            return path
         payload = self.state_dict()
         if extra:
             payload.update(extra)
-        path = self.out_dir / name
         tmp = path.with_suffix(".tmp")
         torch.save(payload, tmp)
         tmp.replace(path)   # atomic: khong de lai file hong khi bi ngat

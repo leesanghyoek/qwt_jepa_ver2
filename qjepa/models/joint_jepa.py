@@ -101,8 +101,18 @@ class JointRestorationJEPA(nn.Module):
         imu_bad_phys: torch.Tensor,
         image_time: torch.Tensor,
         imu_times: torch.Tensor,
+        *,
+        predict_latents: bool = False,
+        probe_image: torch.Tensor | None = None,
+        probe_imu_norm: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        """Duong online; chi nhan du lieu NHIEU (spec muc 15)."""
+        """Duong online; chi nhan du lieu NHIEU (spec muc 15).
+
+        `predict_latents` va `probe_*` gop cac duong forward PHU vao CUNG mot lan
+        goi forward. Voi DDP dieu nay la bat buoc: moi tham so can gradient phai
+        duoc dung BEN TRONG forward cua module duoc boc, neu khong reducer bao
+        "mark a variable ready only once" (themjacobian muc 10).
+        """
         b = image_bad.shape[0]
         if image_bad.dim() != 4 or image_bad.shape[1] != 3:
             raise ValueError(f"image_bad can [B,3,H,W], nhan {tuple(image_bad.shape)}")
@@ -132,7 +142,7 @@ class JointRestorationJEPA(nn.Module):
         image_hat = self.image_transform.synthesis(ci + delta_ci, image_layout)
         imu_hat_norm = self.imu_transform.synthesis(cu + delta_cu, imu_layout)
 
-        return {
+        out = {
             "image_hat": image_hat,
             "imu_hat_norm": imu_hat_norm,
             "imu_hat_phys": self.normalizer.denormalize(imu_hat_norm),
@@ -141,6 +151,14 @@ class JointRestorationJEPA(nn.Module):
             "zi": zi,
             "zu": zu,
         }
+        if predict_latents:
+            out["pred_image"] = self.image_predictor(image_tokens(zi))
+            out["pred_imu"] = self.imu_predictor(imu_tokens(zu))
+        if probe_image is not None:
+            out["probe_fi"] = self.encode_image_dense(probe_image)
+        if probe_imu_norm is not None:
+            out["probe_fu"] = self.encode_imu_dense_normalized(probe_imu_norm)
+        return out
 
     # -- API tach cho do do nhay (themjacobian muc 5) ----------------------
     def encode_image_dense(self, image: torch.Tensor) -> torch.Tensor:

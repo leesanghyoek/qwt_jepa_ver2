@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import replace
+import sys
 from pathlib import Path
 
 import torch
 
 from .config import Config, load_config
+from .training import distributed as dstr
 from .data.manifest import build_manifest, read_manifest, write_manifest
 from .data.normalize import ImuNormalizer
 from .data.tartanair import audit_dataset, write_audit
@@ -30,6 +33,37 @@ def _device(name: str) -> torch.device:
     if name == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(name)
+
+
+def _resolve_gpus(requested: str) -> int:
+    """'auto' -> dung het GPU dang co; so cu the -> dung dung so do."""
+    available = torch.cuda.device_count()
+    if requested == "auto":
+        return max(1, available)
+    n = int(requested)
+    if n > available:
+        raise SystemExit(f"yeu cau {n} GPU nhung chi co {available}")
+    return max(1, n)
+
+
+def _relaunch_with_torchrun(nproc: int, argv: list[str]) -> None:
+    """Chay lai chinh lenh nay duoi torchrun de co nproc process."""
+    import subprocess
+
+    cmd = [
+        sys.executable, "-m", "torch.distributed.run",
+        f"--nproc_per_node={nproc}", "--standalone",
+        "-m", "qjepa", *argv,
+    ]
+    # Khi torch da duoc import trong process nay (vi du mot cell notebook chay
+    # `import torch` truoc), no dat MKL_THREADING_LAYER=INTEL. Bien do truyen
+    # sang process con va gay
+    #   "MKL_THREADING_LAYER=INTEL is incompatible with libgomp.so.1"
+    # khien torchrun chet ngay. Ep ve GNU cho process con.
+    env = {**os.environ, "MKL_THREADING_LAYER": "GNU"}
+    print(f"[dist] phat hien {nproc} GPU -> chay lai bang torchrun:")
+    print("  " + " ".join(cmd[:6]) + " ...")
+    raise SystemExit(subprocess.call(cmd, env=env))
 
 
 def _load(args) -> tuple[Config, dict, ImuNormalizer]:
@@ -126,14 +160,16 @@ def cmd_check_transform(args) -> None:
 
 
 def _trainer(args) -> tuple[Trainer, Config]:
+    info = dstr.setup()
     cfg, built, normalizer = _load(args)
     set_seed(cfg.seed)
     trainer = Trainer(
         cfg,
         built["samples"],
         normalizer,
-        device=_device(args.device),
+        device=dstr.resolve_device(info, args.device),
         manifest_hash=built["meta"]["manifest_hash"],
+        dist=info,
     )
     return trainer, cfg
 
@@ -169,6 +205,11 @@ def cmd_overfit(args) -> None:
 
 
 def cmd_train(args) -> None:
+    # Chua o trong torchrun va co nhieu GPU -> khoi dong lai da process.
+    if "WORLD_SIZE" not in os.environ:
+        nproc = _resolve_gpus(args.gpus)
+        if nproc > 1:
+            _relaunch_with_torchrun(nproc, sys.argv[1:])
     trainer, cfg = _trainer(args)
     if args.resume:
         trainer.load_checkpoint(args.resume)
@@ -181,9 +222,12 @@ def cmd_train(args) -> None:
         trainer.model.load_state_dict(payload["model"], strict=True)
         print(f"init trong so tu {args.init}; step bat dau lai tu 0")
     summary = trainer.train(max_steps=args.steps, log_every=args.log_every)
-    print("\ntrain xong:", summary)
+    if trainer.dist.is_main:
+        print("\ntrain xong:", summary)
     trainer.validate()
-    print("export:", trainer.export_inference())
+    if trainer.dist.is_main:
+        print("export:", trainer.export_inference())
+    dstr.cleanup()
 
 
 def cmd_evaluate(args) -> None:
@@ -368,6 +412,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--manifest", required=True)
         sp.add_argument("--device", default="auto")
         sp.add_argument("--output-dir", default=None)
+        sp.add_argument(
+            "--gpus", default="auto",
+            help="'auto' dung het GPU dang co (DDP neu >1), hoac so cu the vi du '1'",
+        )
 
     s = sub.add_parser("smoke-train", help="gate G2 forward/backward")
     common(s); s.add_argument("--steps", type=int, default=30)

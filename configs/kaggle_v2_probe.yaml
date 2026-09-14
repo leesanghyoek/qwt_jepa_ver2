@@ -103,8 +103,8 @@ train:
   - 0.999
   weight_decay: 0.0001
   no_decay_bias_and_norm: true
-  batch_size: 8
-  gradient_accumulation: 1
+  batch_size: 4
+  gradient_accumulation: 2
   grad_clip_norm: 1.0
   precision: fp16
   num_workers: 4
@@ -155,8 +155,8 @@ representation_probe:
   weight_decay: 0.0001
   warmup_updates: 200
   minimum_lr: 1.0e-06
-  batch_size: 8
-  gradient_accumulation: 1
+  batch_size: 4
+  gradient_accumulation: 2
   precision: fp32
   max_successful_updates: 2000
   validation_every_updates: 200

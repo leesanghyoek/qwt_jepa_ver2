@@ -23,7 +23,7 @@ IMU nhieu  ──> Haar 1D          ──> CNN1D encoder ─┘                
 | G4 | Pilot held-out + JEPA | **NOT_RUN** — can GPU Kaggle |
 | G5 | Save/load/resume/export | **PASS** |
 
-84 test: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q`
+91 test: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -q`
 
 > GPU **khong deterministic** (cuDNN autotune): hai run giong het nhau lech
 > ~9,6e-05 o muc tham so. Tren CPU sai khac la 0,0 va resume tai epoch boundary
@@ -98,6 +98,24 @@ sample/s); tang batch chi ton them VRAM ma khong nhanh hon. Nut that that su la
 
 Loader doc `.npy` neu co, nguoc lai `.txt` — **dataset resize tren Kaggle chi co
 `.txt`** vi cell resize bo qua `.npy`. Hai dinh dang da doi chieu trung khop tuyet doi.
+
+## Da GPU
+
+`--gpus auto` (mac dinh) dung het GPU dang co; mot GPU thi chay thang, nhieu GPU
+thi tu khoi dong lai bang `torchrun` va dung DDP.
+
+```bash
+python -m qjepa train --config configs/kaggle_balanced.yaml --manifest outputs/manifest --gpus auto
+python -m qjepa train --config configs/kaggle_balanced.yaml --manifest outputs/manifest --gpus 1
+```
+
+`gradient_accumulation` tu chia cho so GPU de **effective batch khong doi**, nen
+run 1 GPU va 2 GPU so sanh truc tiep duoc. Khong chia het thi code canh bao.
+
+**Da kiem bang test that** (2 process, backend gloo): sau khi train, hai rank co
+tham so **giong het nhau** o ca Stage A, Stage B (teacher EMA) va khi bat encoder
+sensitivity; DistributedSampler chia du lieu khong chong lap; chi rank 0 ghi
+checkpoint. **Chua kiem** tren 2 GPU roi voi NCCL — may phat trien chi co mot GPU.
 
 ## Chay o may local
 
