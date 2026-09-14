@@ -390,6 +390,14 @@ def cmd_plot(args) -> None:
     from .evaluation.plots import plot_training, print_diagnosis
 
     run_dir = Path(args.run_dir)
+    log = run_dir / "train_log.jsonl"
+    if not log.exists():
+        raise SystemExit(
+            f"khong thay {log}\n"
+            f"  - thu muc run co dung khong? cac run dang co: "
+            f"{[p.name for p in sorted(run_dir.parent.glob('*')) if (p / 'train_log.jsonl').exists()] or 'khong co run nao'}\n"
+            "  - da chay `qjepa train` chua? log chi duoc ghi sau optimizer step dau tien."
+        )
     print(f"=== CHAN DOAN: {run_dir} ===")
     print_diagnosis(run_dir)
     curves = plot_training(run_dir, title=args.title)

@@ -48,9 +48,19 @@ sys.path.insert(0, str(CODE))
 !pip install -q pyyaml
 print('cwd =', os.getcwd())
 print('qjepa:', (CODE/'qjepa').is_dir())
+!git -C {CODE} log --oneline -1
+!python -m qjepa --help | head -3
 ```
 
-> Phien sau chi can `!git -C /kaggle/working/code pull -q` thay vi clone lai.
+**Hai dong cuoi quan trong.** Chung cho biet ban dang chay ban code nao va co
+nhung lenh gi. Neu mot lenh trong huong dan bao `invalid choice`, nghia la clone
+cua ban CU hon huong dan — cap nhat bang:
+
+```python
+!git -C /kaggle/working/code pull -q && git -C /kaggle/working/code log --oneline -1
+```
+
+Dang giua phien thi `pull` du; khong can chay lai Cell 1 (no xoa va clone lai tu dau).
 
 ---
 
@@ -385,6 +395,8 @@ Jacobian regularization (themjacobian v2) — control va treatment tu **cung** p
 | Loss `NaN` | Bao loi ro va dung; kiem `precision` va gradient clip |
 | RAM het khi build-manifest | Giam so trajectory, hoac build tung split |
 | `MKL_THREADING_LAYER=INTEL is incompatible` | Da xu ly san: code ep `GNU` cho process con cua torchrun |
+| `invalid choice: 'plot'` (hoac lenh khac) | Clone cu hon huong dan — `git -C /kaggle/working/code pull` |
+| `khong thay .../train_log.jsonl` | Chua chay Cell 8, hoac `--run-dir` sai; lenh se liet ke cac run dang co |
 | Chi thay 1 GPU du co 2 | Kiem `torch.cuda.device_count()` o Cell 0; Kaggle phai chon `GPU T4 x2` |
 | `perturbation bi mat` (chi khi bat v2) | Bien do IMU qua lon so voi epsilon o FP32 |
 
